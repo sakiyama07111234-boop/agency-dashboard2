@@ -443,8 +443,21 @@ class BSeedsAdapter(BaseSiteAdapter):
             page_text = extract_text(soup)
             pairs = parse_table_pairs(soup)
 
-            company = (pairs.get("募集企業", "") or pairs.get("会社名", "") or
-                       find_text_by_label(soup, "募集企業", "会社名"))
+            # 会社名: 専用クラス → テーブル → ラベル検索の優先順で抽出
+            company = ""
+            # 1. p.agency-fv__doc--company ("募集企業：XXX" 形式)
+            company_el = soup.find("p", class_="agency-fv__doc--company")
+            if company_el:
+                company_text = extract_text(company_el)
+                company = re.sub(r"^募集企業\s*[：:]\s*", "", company_text)
+            # 2. テーブルから (企業名 / 募集企業 / 会社名)
+            if not company:
+                company = (pairs.get("企業名", "") or pairs.get("募集企業", "") or
+                           pairs.get("会社名", ""))
+            # 3. ラベル近傍テキスト
+            if not company:
+                company = find_text_by_label(soup, "企業名", "募集企業", "会社名")
+
             category = pairs.get("商材", "") or pairs.get("業種", "")
             contract_type = pairs.get("契約形態", "") or pairs.get("募集形態", "")
             reward = pairs.get("報酬", "") or pairs.get("収益", "")
@@ -727,8 +740,11 @@ class FcHikakuAdapter(BaseSiteAdapter):
         "https://www.fc-hikaku.net/search/",
         "https://www.fc-hikaku.net/search/all",
     ]
-    # 詳細は /franchises/数字 or /企業スラッグ 形式
-    DETAIL_RE = re.compile(r"fc-hikaku\.net/franchises/")
+    # 詳細は /{slug}_fc 形式 (例: /familymart2_fc, /amau_fc)
+    DETAIL_RE = re.compile(r"fc-hikaku\.net/[a-zA-Z0-9_]+-?[a-zA-Z0-9_]*_fc(?:/|$)")
+    # 除外パス
+    SKIP_PATHS = {"search", "seminar", "column", "ranking", "about",
+                  "contact", "privacy", "terms", "sitemap", "login"}
 
     def run(self) -> List[JobRecord]:
         logger.info("START %s", self.site_name)
@@ -755,7 +771,13 @@ class FcHikakuAdapter(BaseSiteAdapter):
                 href = clean_url(href)
                 if "fc-hikaku.net" not in href:
                     continue
-                if self.DETAIL_RE.search(href) and href not in seen:
+                # _fc で終わるスラッグを詳細ページとして収集
+                parsed = urlparse(href)
+                path = parsed.path.strip("/")
+                # /slug_fc (サブパス無し) のみ収集、/slug_fc/data 等は除外
+                if (path.endswith("_fc") and "/" not in path
+                        and path.split("_")[0] not in self.SKIP_PATHS
+                        and href not in seen):
                     seen.add(href)
                     detail_urls.append(href)
 
@@ -789,9 +811,29 @@ class FcHikakuAdapter(BaseSiteAdapter):
             pairs = parse_table_pairs(soup)
             page_text = extract_text(soup)
 
-            company = (pairs.get("企業名", "") or pairs.get("募集企業", "") or
-                       pairs.get("会社名", "") or
-                       find_text_by_label(soup, "企業名", "会社名", "募集企業"))
+            # 会社名: ヘッダー p.sub_text → テーブル → ラベル検索
+            company = ""
+            # 1. p.sub_text ("会社名 株式会社XXX" 形式)
+            sub_text_el = soup.find("p", class_="sub_text")
+            if sub_text_el:
+                sub_text = extract_text(sub_text_el)
+                company = re.sub(r"^会社名\s*", "", sub_text)
+            # 2. テーブルから
+            if not company:
+                company = (pairs.get("会社名", "") or pairs.get("企業名", "") or
+                           pairs.get("募集企業", ""))
+            # 3. h3 に "の会社概要" を含む見出しから会社名を抽出
+            if not company:
+                for h3 in soup.find_all("h3"):
+                    h3_text = extract_text(h3)
+                    m = re.match(r"(.+?)の会社概要", h3_text)
+                    if m:
+                        company = m.group(1)
+                        break
+            # 4. ラベル近傍テキスト
+            if not company:
+                company = find_text_by_label(soup, "会社名", "企業名", "募集企業")
+
             category = pairs.get("業種", "") or pairs.get("カテゴリ", "")
             initial_cost = (pairs.get("開業資金", "") or pairs.get("初期費用", "") or
                             pairs.get("加盟金", ""))
