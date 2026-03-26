@@ -1,0 +1,38 @@
+name: Daily Scrape
+
+on:
+  schedule:
+    # 毎日 0:00 UTC = 日本時間 9:00
+    - cron: "0 0 * * *"
+  workflow_dispatch: # 手動実行も可能
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Run scraper
+        run: python agency_scraper.py
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add agency_jobs_latest.csv agency_jobs.db
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: スクレイピング結果を更新 $(date -u +%Y-%m-%d)"
+            git push
+          fi
