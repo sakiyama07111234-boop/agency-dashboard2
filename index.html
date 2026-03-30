@@ -289,6 +289,16 @@
       color: var(--accent);
     }
 
+    .company-link {
+      color: #ffffff;
+      text-decoration: none;
+    }
+
+    .company-link:hover {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+
     .muted {
       color: var(--muted);
     }
@@ -766,7 +776,7 @@
             <div class="muted small">${escapeHtml(trimText(row.summary || "", 120))}</div>
           </td>
           <td>${row.detail_url
-            ? `<a href="${escapeAttr(row.detail_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.company_name || "")}</a>`
+            ? `<a class="company-link" href="${escapeAttr(row.detail_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.company_name || "")}</a>`
             : escapeHtml(row.company_name || "")}</td>
           <td>${escapeHtml(row.category || "")}</td>
           <td>${escapeHtml(row.contract_type || "")}</td>
