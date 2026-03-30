@@ -608,7 +608,7 @@ class DairitenboshuAdapter(BaseSiteAdapter):
                 summary = normalize_space(meta["content"])
 
             recurring = ""
-            if re.search(r"(ストック|継続|毎月|月額)", f"{reward} {page_text[:500]}"):
+            if re.search(r"(ストック|継続報酬|継続収益|毎月|月額|サブスク)", f"{reward} {page_text[:3000]}"):
                 recurring = "あり"
 
             features_parts = []
@@ -755,7 +755,7 @@ class KakehashiAdapter(BaseSiteAdapter):
                     summary = normalize_space(meta["content"])[:500]
 
             recurring = ""
-            if re.search(r"(ストック|継続|毎月|月額)", f"{reward} {page_text[:500]}"):
+            if re.search(r"(ストック|継続報酬|継続収益|毎月|月額|サブスク)", f"{reward} {page_text[:3000]}"):
                 recurring = "あり"
 
             job = JobRecord(
@@ -928,16 +928,15 @@ class FcHikakuAdapter(BaseSiteAdapter):
                 summary = normalize_space(meta["content"])[:500]
 
             recurring = ""
-            if re.search(r"(ストック|継続|ロイヤリティ|毎月|月額)", page_text[:1000]):
+            if re.search(r"(ストック|継続報酬|継続収益|ロイヤリティ|毎月|月額|サブスク)", page_text[:3000]):
                 recurring = "あり"
 
-            # 報酬: 収益モデルdl → テーブル → ページ内から月商/年商/利益の記述を抽出
+            # 報酬: 収益モデルdl → テーブル → ページ全体から月商/年商/月収/年収の記述を抽出
             reward = pairs.get("収益モデル", "") or pairs.get("報酬", "")
             if not reward:
-                # ページ内の月商/年商/売上の記述を探す
                 for kw_pat in [r"月商[0-9,，万億円\s～〜\-]+", r"年商[0-9,，万億円\s～〜\-]+",
                                r"月収[0-9,，万億円\s～〜\-]+", r"年収[0-9,，万億円\s～〜\-]+"]:
-                    m = re.search(kw_pat, page_text[:2000])
+                    m = re.search(kw_pat, page_text)
                     if m:
                         reward = m.group(0)
                         break
