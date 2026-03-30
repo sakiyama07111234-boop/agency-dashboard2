@@ -160,10 +160,16 @@ class JobRecord:
         self.first_seen_at = self.first_seen_at or now
         self.last_seen_at = self.last_seen_at or now
 
-        self.hash_key = sha256_text(
-            "||".join([self.site_name, self.detail_url or self.title,
-                       self.title, self.company_name])
-        )
+        # detail_urlがあればsite_name+detail_urlのみでユニーク識別
+        # （titleや会社名の変更で重複レコードが生まれるのを防ぐ）
+        if self.detail_url:
+            self.hash_key = sha256_text(
+                "||".join([self.site_name, self.detail_url])
+            )
+        else:
+            self.hash_key = sha256_text(
+                "||".join([self.site_name, self.title, self.company_name])
+            )
         self.content_hash = sha256_text(json.dumps({
             "title": self.title, "company_name": self.company_name,
             "category": self.category, "contract_type": self.contract_type,
@@ -351,6 +357,20 @@ def parse_table_pairs(soup: BeautifulSoup) -> dict:
     return pairs
 
 
+def parse_dl_pairs(soup: BeautifulSoup) -> dict:
+    """dl/dt/dd ペアをdictで返す"""
+    pairs = {}
+    for dl in soup.find_all("dl"):
+        dts = dl.find_all("dt")
+        dds = dl.find_all("dd")
+        for dt, dd in zip(dts, dds):
+            key = extract_text(dt)
+            val = extract_text(dd)
+            if key and val:
+                pairs[key] = val
+    return pairs
+
+
 def find_text_by_label(soup: BeautifulSoup, *labels: str) -> str:
     """ページ内からlabelに近いテキストを探す"""
     for label in labels:
@@ -460,9 +480,14 @@ class BSeedsAdapter(BaseSiteAdapter):
 
             category = pairs.get("商材", "") or pairs.get("業種", "")
             contract_type = pairs.get("契約形態", "") or pairs.get("募集形態", "")
-            reward = pairs.get("報酬", "") or pairs.get("収益", "")
-            initial_cost = pairs.get("初期費用", "")
-            area = pairs.get("募集地域", "") or pairs.get("対象エリア", "")
+            reward = (pairs.get("報酬", "") or pairs.get("収益", "") or
+                      pairs.get("報酬体系", "") or pairs.get("マージン", "") or
+                      find_text_by_label(soup, "報酬", "収益", "マージン"))
+            initial_cost = (pairs.get("初期費用", "") or pairs.get("開業資金", "") or
+                            pairs.get("加盟金", ""))
+            area = (pairs.get("募集地域", "") or pairs.get("対象エリア", "") or
+                    pairs.get("エリア", "") or pairs.get("活動エリア", "") or
+                    find_text_by_label(soup, "募集地域", "対象エリア", "エリア"))
             target = pairs.get("募集対象", "")
 
             # 概要テキスト抽出
@@ -477,7 +502,8 @@ class BSeedsAdapter(BaseSiteAdapter):
                     summary = normalize_space(meta["content"])
 
             recurring = ""
-            if re.search(r"(ストック|継続|毎月|月額)", f"{reward} {page_text[:500]}"):
+            recurring_src = f"{reward} {pairs.get('継続収益', '')} {page_text[:2000]}"
+            if re.search(r"(ストック|継続報酬|継続収益|毎月|月額|サブスク)", recurring_src):
                 recurring = "あり"
 
             job = JobRecord(
@@ -685,6 +711,7 @@ class KakehashiAdapter(BaseSiteAdapter):
                 continue
 
             pairs = parse_table_pairs(soup)
+            dl_pairs = parse_dl_pairs(soup)
             page_text = extract_text(soup)
 
             company = (pairs.get("募集企業", "") or pairs.get("会社名", "") or
@@ -695,10 +722,25 @@ class KakehashiAdapter(BaseSiteAdapter):
                 if kw in page_text[:1000]:
                     contract_type = (contract_type + " / " + kw).strip(" / ")
 
-            reward = pairs.get("報酬", "") or pairs.get("収益", "")
-            initial_cost = pairs.get("初期費用", "") or pairs.get("加盟金", "")
+            reward = (pairs.get("報酬", "") or pairs.get("収益", "") or
+                      dl_pairs.get("マージン率", "") or dl_pairs.get("収益モデル", "") or
+                      dl_pairs.get("報酬", ""))
+            initial_cost = pairs.get("初期費用", "") or pairs.get("加盟金", "") or pairs.get("開業資金", "")
+            target = pairs.get("募集対象", "") or dl_pairs.get("応募要件", "")
+
+            # エリア: dl内の地域dt(全国/北海道/東北/関東等)から構築
             area = pairs.get("募集地域", "") or pairs.get("対象エリア", "")
-            target = pairs.get("募集対象", "")
+            if not area:
+                region_keys = ["全国", "北海道", "東北", "関東", "北信越", "東海",
+                               "関西", "中国", "四国", "九州", "沖縄", "海外"]
+                found_regions = []
+                seen_regions = set()
+                for k in region_keys:
+                    if k in dl_pairs and k not in seen_regions:
+                        seen_regions.add(k)
+                        found_regions.append(k)
+                if found_regions:
+                    area = " / ".join(found_regions) if "全国" not in found_regions else "全国"
 
             # 概要
             summary = ""
@@ -844,9 +886,40 @@ class FcHikakuAdapter(BaseSiteAdapter):
                 company = find_text_by_label(soup, "会社名", "企業名", "募集企業")
 
             category = pairs.get("業種", "") or pairs.get("カテゴリ", "")
-            initial_cost = (pairs.get("開業資金", "") or pairs.get("初期費用", "") or
-                            pairs.get("加盟金", ""))
+
+            # 初期費用: span.franchise_cost → div.fund_sums_box → h4開業資金の次のp → テーブル
+            initial_cost = ""
+            fund_box = soup.find("div", class_="fund_sums_box")
+            if fund_box:
+                initial_cost = extract_text(fund_box)
+                initial_cost = re.sub(r"^開業資金\s*", "", initial_cost)
+            if not initial_cost:
+                for h4 in soup.find_all("h4"):
+                    if "開業資金" in extract_text(h4):
+                        p_sib = h4.find_next_sibling("p")
+                        if p_sib:
+                            initial_cost = extract_text(p_sib)
+                        break
+            if not initial_cost:
+                cost_span = soup.find("span", class_="franchise_cost")
+                if cost_span:
+                    cost_text = extract_text(cost_span)
+                    initial_cost = re.sub(r"^開業資金\s*[:：]?\s*", "", cost_text)
+            if not initial_cost:
+                initial_cost = (pairs.get("開業資金", "") or pairs.get("初期費用", "") or
+                                pairs.get("加盟金", ""))
+
+            # エリア: テーブル「都道府県が同じ」→「予算が同じ」の代わりにページ内の募集エリアを探す
             area = pairs.get("募集エリア", "") or pairs.get("対象エリア", "")
+            if not area:
+                area_text = pairs.get("都道府県が同じ", "")
+                if area_text:
+                    # 全都道府県が含まれる場合は「全国」
+                    if len(area_text) > 100:
+                        area = "全国"
+                    else:
+                        area = area_text[:100]
+
             contract_type = "FC"
 
             summary = ""
@@ -858,7 +931,16 @@ class FcHikakuAdapter(BaseSiteAdapter):
             if re.search(r"(ストック|継続|ロイヤリティ|毎月|月額)", page_text[:1000]):
                 recurring = "あり"
 
+            # 報酬: 収益モデルdl → テーブル → ページ内から月商/年商/利益の記述を抽出
             reward = pairs.get("収益モデル", "") or pairs.get("報酬", "")
+            if not reward:
+                # ページ内の月商/年商/売上の記述を探す
+                for kw_pat in [r"月商[0-9,，万億円\s～〜\-]+", r"年商[0-9,，万億円\s～〜\-]+",
+                               r"月収[0-9,，万億円\s～〜\-]+", r"年収[0-9,，万億円\s～〜\-]+"]:
+                    m = re.search(kw_pat, page_text[:2000])
+                    if m:
+                        reward = m.group(0)
+                        break
 
             job = JobRecord(
                 site_name=self.site_name,
