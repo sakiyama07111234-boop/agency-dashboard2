@@ -765,7 +765,9 @@
             </a>
             <div class="muted small">${escapeHtml(trimText(row.summary || "", 120))}</div>
           </td>
-          <td>${escapeHtml(row.company_name || "")}</td>
+          <td>${row.detail_url
+            ? `<a href="${escapeAttr(row.detail_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(row.company_name || "")}</a>`
+            : escapeHtml(row.company_name || "")}</td>
           <td>${escapeHtml(row.category || "")}</td>
           <td>${escapeHtml(row.contract_type || "")}</td>
           <td>${escapeHtml(trimText(row.reward_text || "", 90))}</td>

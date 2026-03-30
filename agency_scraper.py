@@ -668,14 +668,19 @@ class KakehashiAdapter(BaseSiteAdapter):
                 logger.warning("Skip detail %s: %s", url, e)
                 continue
 
+            # 案件名: titleタグを｜で分割してキャッチコピーを取得
             title = ""
-            for h in soup.find_all(["h1", "h2"]):
-                t = extract_text(h)
-                if t and len(t) >= 10 and "カケハシ" not in t and "KAKEHASHI" not in t:
-                    title = t
-                    break
+            title_tag = soup.find("title")
+            if title_tag:
+                raw_title = extract_text(title_tag)
+                if raw_title and "｜" in raw_title:
+                    title = raw_title.split("｜")[0].strip()
             if not title:
-                title = extract_text(soup.find("title"))
+                for h in soup.find_all(["h1", "h2"]):
+                    t = extract_text(h)
+                    if t and len(t) >= 10 and "カケハシ" not in t and "KAKEHASHI" not in t:
+                        title = t
+                        break
             if not title or len(title) < 5:
                 continue
 
@@ -797,19 +802,23 @@ class FcHikakuAdapter(BaseSiteAdapter):
                 logger.warning("Skip detail %s: %s", url, e)
                 continue
 
-            title = ""
-            for h in soup.find_all(["h1", "h2"]):
-                t = extract_text(h)
-                if t and len(t) >= 5 and "フランチャイズ比較" not in t:
-                    title = t
-                    break
-            if not title:
-                title = extract_text(soup.find("title"))
-            if not title or len(title) < 5:
-                continue
-
             pairs = parse_table_pairs(soup)
             page_text = extract_text(soup)
+
+            # 案件名: dl/dtの「ブランド名」を優先、なければh1からサフィックス除去
+            title = pairs.get("ブランド名", "")
+            if not title:
+                for h in soup.find_all(["h1", "h2"]):
+                    t = extract_text(h)
+                    if t and len(t) >= 5 and "フランチャイズ比較" not in t:
+                        title = re.sub(r"の(フランチャイズ|代理店)本部名の独立・開業・起業情報$", "", t).strip()
+                        break
+            if not title:
+                title = extract_text(soup.find("title"))
+                if title:
+                    title = re.sub(r"の(フランチャイズ|代理店)の独立・開業・起業情報.*$", "", title).strip()
+            if not title or len(title) < 3:
+                continue
 
             # 会社名: ヘッダー p.sub_text → テーブル → ラベル検索
             company = ""
